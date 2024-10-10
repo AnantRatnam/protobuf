@@ -15,6 +15,7 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <istream>
 #include <ostream>
 #include <string>
@@ -22,6 +23,7 @@
 
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
+#include "absl/log/log.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/cord_buffer.h"
 #include "absl/strings/internal/resize_uninitialized.h"
@@ -45,13 +47,21 @@
 namespace google {
 namespace protobuf {
 
-void MessageLite::DestroyInstance(bool free_memory) {
+void MessageLite::DestroyInstance() {
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-  _class_data_->delete_message(this, free_memory);
+  _class_data_->destroy_message(*this);
 #else   // PROTOBUF_CUSTOM_VTABLE
-  ABSL_DCHECK(!free_memory);
   this->~MessageLite();
 #endif  // PROTOBUF_CUSTOM_VTABLE
+}
+
+void MessageLite::DeleteInstance() {
+  // Cache the size and pointer because we can't access them after the
+  // destruction.
+  const size_t size = GetClassData()->allocation_size();
+  void* const ptr = this;
+  DestroyInstance();
+  internal::SizedDelete(ptr, size);
 }
 
 void MessageLite::CheckTypeAndMergeFrom(const MessageLite& other) {
@@ -83,8 +93,8 @@ const char* MessageLite::_InternalParse(const char* ptr,
   return internal::TcParser::ParseLoop(this, ptr, ctx, GetTcParseTable());
 }
 
-std::string MessageLite::GetTypeName() const {
-  return std::string(TypeId::Get(*this).name());
+internal::GetTypeNameReturnType MessageLite::GetTypeName() const {
+  return internal::GetTypeNameReturnType(TypeId::Get(*this).name());
 }
 
 absl::string_view TypeId::name() const {
@@ -94,7 +104,7 @@ absl::string_view TypeId::name() const {
   }
 
   // For LITE messages, the type name is a char[] just beyond ClassData.
-  return reinterpret_cast<const char*>(data_) + sizeof(MessageLite::ClassData);
+  return reinterpret_cast<const char*>(data_) + sizeof(internal::ClassData);
 }
 
 void MessageLite::OnDemandRegisterArenaDtor(Arena* arena) {
@@ -639,7 +649,7 @@ bool MessageLite::AppendPartialToCord(absl::Cord* output) const {
   const size_t size = ByteSizeLong();
   const size_t total_size = size + output->size();
   if (size > INT_MAX) {
-    ABSL_LOG(ERROR) << "Exceeded maximum protobuf size of 2GB.";
+    ABSL_LOG(ERROR) << "Exceeded maximum protobuf size of 2GB: " << size;
     return false;
   }
 
@@ -702,16 +712,6 @@ absl::Cord MessageLite::SerializePartialAsCord() const {
 }
 
 namespace internal {
-
-MessageLite* NewFromPrototypeHelper(const MessageLite* prototype,
-                                    Arena* arena) {
-  return prototype->New(arena);
-}
-template <>
-void GenericTypeHandler<MessageLite>::Merge(const MessageLite& from,
-                                            MessageLite* to) {
-  to->CheckTypeAndMergeFrom(from);
-}
 
 // Non-inline variants of std::string specializations for
 // various InternalMetadata routines.

@@ -7,9 +7,10 @@
 
 use googletest::prelude::*;
 use protobuf::prelude::*;
+use protobuf::View;
 
+use edition_unittest_rust_proto::TestAllTypes as TestAllTypesEditions;
 use paste::paste;
-use unittest_edition_rust_proto::TestAllTypes as TestAllTypesEditions;
 use unittest_proto3_optional_rust_proto::TestProto3Optional;
 use unittest_proto3_rust_proto::TestAllTypes as TestAllTypesProto3;
 use unittest_rust_proto::TestAllTypes as TestAllTypesProto2;
@@ -29,6 +30,12 @@ macro_rules! generate_parameterized_serialization_test {
 
                 let serialized = msg.as_mut().serialize().unwrap();
                 assert_that!(serialized.len(), eq(0));
+            }
+
+            #[gtest]
+            fn [< serialize_default_view $name_ext>]() {
+                let default = View::<[< $type >]>::default();
+                assert_that!(default.serialize().unwrap().len(), eq(0));
             }
 
             #[gtest]

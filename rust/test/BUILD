@@ -10,82 +10,6 @@ load(
     "rust_upb_proto_library",
 )
 
-UNITTEST_PROTO_TARGET = "//src/google/protobuf:test_protos"
-
-UNITTEST_PROTO3_TARGET = "//src/google/protobuf:test_protos"
-
-UNITTEST_PROTO3_OPTIONAL_TARGET = "//src/google/protobuf:test_protos"
-
-UNITTEST_EDITION_TARGET = "//src/google/protobuf:test_protos"
-
-rust_upb_proto_library(
-    name = "unittest_upb_rust_proto",
-    testonly = True,
-    visibility = [
-        "//rust/test/shared:__subpackages__",
-        "//rust/test/upb:__subpackages__",
-    ],
-    deps = [UNITTEST_PROTO_TARGET],
-)
-
-rust_cc_proto_library(
-    name = "unittest_cpp_rust_proto",
-    testonly = True,
-    visibility = [
-        "//rust/test/cpp:__subpackages__",
-        "//rust/test/shared:__subpackages__",
-    ],
-    deps = [UNITTEST_PROTO_TARGET],
-)
-
-rust_cc_proto_library(
-    name = "unittest_proto3_cpp_rust_proto",
-    testonly = True,
-    visibility = ["//rust/test/shared:__subpackages__"],
-    deps = [UNITTEST_PROTO3_TARGET],
-)
-
-rust_upb_proto_library(
-    name = "unittest_proto3_upb_rust_proto",
-    testonly = True,
-    visibility = [
-        "//rust/test/shared:__subpackages__",
-        "//rust/test/upb:__subpackages__",
-    ],
-    deps = [UNITTEST_PROTO3_TARGET],
-)
-
-rust_cc_proto_library(
-    name = "unittest_proto3_optional_cpp_rust_proto",
-    testonly = True,
-    visibility = ["//rust/test/shared:__subpackages__"],
-    deps = [UNITTEST_PROTO3_OPTIONAL_TARGET],
-)
-
-rust_upb_proto_library(
-    name = "unittest_proto3_optional_upb_rust_proto",
-    testonly = True,
-    visibility = ["//rust/test/shared:__subpackages__"],
-    deps = [UNITTEST_PROTO3_OPTIONAL_TARGET],
-)
-
-rust_cc_proto_library(
-    name = "unittest_edition_cpp_rust_proto",
-    testonly = True,
-    visibility = ["//rust/test/shared:__subpackages__"],
-    deps = [UNITTEST_EDITION_TARGET],
-)
-
-rust_upb_proto_library(
-    name = "unittest_edition_upb_rust_proto",
-    testonly = True,
-    visibility = [
-        "//rust/test/shared:__subpackages__",
-        "//rust/test/upb:__subpackages__",
-    ],
-    deps = [UNITTEST_EDITION_TARGET],
-)
-
 proto_library(
     name = "parent_proto",
     srcs = ["parent.proto"],
@@ -172,7 +96,6 @@ proto_library(
     name = "enums_proto",
     testonly = True,
     srcs = ["enums.proto"],
-    deps = ["//devtools/staticanalysis/pipeline/analyzers/proto_best_practices/proto:optouts_proto"],
 )
 
 rust_cc_proto_library(
@@ -247,7 +170,8 @@ proto_library(
     name = "no_package_import_proto",
     testonly = True,
     srcs = ["no_package_import.proto"],
-    deps = ["//devtools/staticanalysis/pipeline/analyzers/proto_best_practices/proto:optouts_proto"],
+    deps = [
+    ],
 )
 
 proto_library(
@@ -260,7 +184,6 @@ proto_library(
     exports = [":no_package_import_proto"],
     deps = [
         ":no_package_import_proto",
-        "//devtools/staticanalysis/pipeline/analyzers/proto_best_practices/proto:optouts_proto",
     ],
 )
 

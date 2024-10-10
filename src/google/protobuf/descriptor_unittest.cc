@@ -20,7 +20,6 @@
 #include <cstdlib>
 #include <deque>
 #include <functional>
-#include <iostream>
 #include <limits>
 #include <memory>
 #include <string>
@@ -2958,29 +2957,6 @@ TEST_F(MiscTest, DefaultValues) {
   EXPECT_EQ(enum_value_a, message->field(22)->default_value_enum());
 }
 
-TEST_F(MiscTest, InvalidFieldOptions) {
-  FileDescriptorProto file_proto;
-  file_proto.set_name("foo.proto");
-
-  file_proto.set_syntax("editions");
-  file_proto.set_edition(Edition::EDITION_2023);
-
-  DescriptorProto* message_proto = AddMessage(&file_proto, "TestMessage");
-  AddField(message_proto, "foo", 1, FieldDescriptorProto::LABEL_OPTIONAL,
-           FieldDescriptorProto::TYPE_INT32);
-  FieldDescriptorProto* bar_proto =
-      AddField(message_proto, "bar", 2, FieldDescriptorProto::LABEL_OPTIONAL,
-               FieldDescriptorProto::TYPE_INT32);
-
-  FieldOptions* options = bar_proto->mutable_options();
-  options->set_ctype(FieldOptions::CORD);
-
-  // Expects it to fail as int32 fields cannot have ctype.
-  DescriptorPool pool;
-  const FileDescriptor* file = pool.BuildFile(file_proto);
-  EXPECT_EQ(file, nullptr);
-}
-
 TEST_F(MiscTest, FieldOptions) {
   // Try setting field options.
 
@@ -4501,6 +4477,28 @@ TEST_F(ValidationErrorTest, ReservedFieldsDebugString) {
       file->DebugString());
 }
 
+TEST_F(ValidationErrorTest, ReservedFieldsDebugString2023) {
+  const FileDescriptor* file = BuildFile(R"pb(
+    syntax: "editions"
+    edition: EDITION_2023
+    name: "foo.proto"
+    message_type {
+      name: "Foo"
+      reserved_name: "foo"
+      reserved_name: "bar"
+      reserved_range { start: 5 end: 6 }
+      reserved_range { start: 10 end: 20 }
+    })pb");
+
+  ASSERT_EQ(
+      "edition = \"2023\";\n\n"
+      "message Foo {\n"
+      "  reserved 5, 10 to 19;\n"
+      "  reserved foo, bar;\n"
+      "}\n\n",
+      file->DebugString());
+}
+
 TEST_F(ValidationErrorTest, DebugStringReservedRangeMax) {
   const FileDescriptor* file = BuildFile(absl::Substitute(
       "name: \"foo.proto\" "
@@ -4683,6 +4681,37 @@ TEST_F(ValidationErrorTest, EnumReservedFieldsDebugString) {
       "  FOO = 3;\n"
       "  reserved -6, -5 to -4, -1 to 1, 5, 10 to 19;\n"
       "  reserved \"foo\", \"bar\";\n"
+      "}\n\n",
+      file->DebugString());
+}
+
+TEST_F(ValidationErrorTest, EnumReservedFieldsDebugString2023) {
+  const FileDescriptor* file = BuildFile(R"pb(
+    syntax: "editions"
+    edition: EDITION_2023
+    name: "foo.proto"
+    enum_type {
+      name: "Foo"
+      value { name: "FOO" number: 3 }
+      options { features { enum_type: CLOSED } }
+      reserved_name: "foo"
+      reserved_name: "bar"
+      reserved_range { start: -6 end: -6 }
+      reserved_range { start: -5 end: -4 }
+      reserved_range { start: -1 end: 1 }
+      reserved_range { start: 5 end: 5 }
+      reserved_range { start: 10 end: 19 }
+    })pb");
+
+  ASSERT_EQ(
+      "edition = \"2023\";\n\n"
+      "enum Foo {\n"
+      "  option features = {\n"
+      "    enum_type: CLOSED\n"
+      "  };\n"
+      "  FOO = 3;\n"
+      "  reserved -6, -5 to -4, -1 to 1, 5, 10 to 19;\n"
+      "  reserved foo, bar;\n"
       "}\n\n",
       file->DebugString());
 }
@@ -7357,13 +7386,6 @@ TEST_F(ValidationErrorTest, UnusedImportWithOtherError) {
       "foo.proto: Foo.foo: EXTENDEE: \"Baz\" is not defined.\n");
 }
 
-TEST(EditionsTest, DenseRange) {
-  for (int i = static_cast<int>(PROTOBUF_MINIMUM_EDITION);
-       i <= static_cast<int>(PROTOBUF_MAXIMUM_EDITION); ++i) {
-    EXPECT_TRUE(Edition_IsValid(i));
-  }
-}
-
 TEST(IsGroupLike, GroupLikeDelimited) {
   using internal::cpp::IsGroupLike;
   const Descriptor& msg = *editions_unittest::TestDelimited::descriptor();
@@ -7519,7 +7541,7 @@ TEST_F(FeaturesTest, Proto2Features) {
         name: "cord"
         number: 8
         label: LABEL_OPTIONAL
-        type: TYPE_STRING
+        type: TYPE_BYTES
         options { ctype: CORD }
       }
       field {
@@ -7604,6 +7626,8 @@ TEST_F(FeaturesTest, Proto2Features) {
 
   EXPECT_EQ(message->FindFieldByName("str")->cpp_string_type(),
             FieldDescriptor::CppStringType::kString);
+  EXPECT_EQ(message->FindFieldByName("cord")->cpp_string_type(),
+            FieldDescriptor::CppStringType::kCord);
 
   // Check round-trip consistency.
   FileDescriptorProto proto;
@@ -10971,7 +10995,8 @@ TEST_F(FeaturesTest, RemovedFeature) {
         }
       )pb",
       "foo.proto: foo.proto: NAME: Feature "
-      "pb.TestFeatures.removed_feature has been removed in edition 2024\n");
+      "pb.TestFeatures.removed_feature has been removed in edition 2024 and "
+      "can't be used in edition 2024\n");
 }
 
 TEST_F(FeaturesTest, RemovedFeatureDefault) {
@@ -11002,7 +11027,8 @@ TEST_F(FeaturesTest, FutureFeature) {
         }
       )pb",
       "foo.proto: foo.proto: NAME: Feature "
-      "pb.TestFeatures.future_feature wasn't introduced until edition 2024\n");
+      "pb.TestFeatures.future_feature wasn't introduced until edition 2024 and "
+      "can't be used in edition 2023\n");
 }
 
 TEST_F(FeaturesTest, FutureFeatureDefault) {
@@ -12382,14 +12408,20 @@ TEST_F(DatabaseBackedPoolTest, UnittestProto) {
 }
 
 TEST_F(DatabaseBackedPoolTest, FeatureResolution) {
-  FileDescriptorProto proto;
-  FileDescriptorProto::descriptor()->file()->CopyTo(&proto);
-  std::string text_proto;
-  google::protobuf::TextFormat::PrintToString(proto, &text_proto);
-  AddToDatabase(&database_, text_proto);
-  pb::TestFeatures::descriptor()->file()->CopyTo(&proto);
-  google::protobuf::TextFormat::PrintToString(proto, &text_proto);
-  AddToDatabase(&database_, text_proto);
+  {
+    FileDescriptorProto proto;
+    FileDescriptorProto::descriptor()->file()->CopyTo(&proto);
+    std::string text_proto;
+    google::protobuf::TextFormat::PrintToString(proto, &text_proto);
+    AddToDatabase(&database_, text_proto);
+  }
+  {
+    FileDescriptorProto proto;
+    pb::TestFeatures::descriptor()->file()->CopyTo(&proto);
+    std::string text_proto;
+    google::protobuf::TextFormat::PrintToString(proto, &text_proto);
+    AddToDatabase(&database_, text_proto);
+  }
   AddToDatabase(&database_, R"pb(
     name: "features.proto"
     syntax: "editions"
@@ -12433,14 +12465,20 @@ TEST_F(DatabaseBackedPoolTest, FeatureResolution) {
 }
 
 TEST_F(DatabaseBackedPoolTest, FeatureLifetimeError) {
-  FileDescriptorProto proto;
-  FileDescriptorProto::descriptor()->file()->CopyTo(&proto);
-  std::string text_proto;
-  google::protobuf::TextFormat::PrintToString(proto, &text_proto);
-  AddToDatabase(&database_, text_proto);
-  pb::TestFeatures::descriptor()->file()->CopyTo(&proto);
-  google::protobuf::TextFormat::PrintToString(proto, &text_proto);
-  AddToDatabase(&database_, text_proto);
+  {
+    FileDescriptorProto proto;
+    FileDescriptorProto::descriptor()->file()->CopyTo(&proto);
+    std::string text_proto;
+    google::protobuf::TextFormat::PrintToString(proto, &text_proto);
+    AddToDatabase(&database_, text_proto);
+  }
+  {
+    FileDescriptorProto proto;
+    pb::TestFeatures::descriptor()->file()->CopyTo(&proto);
+    std::string text_proto;
+    google::protobuf::TextFormat::PrintToString(proto, &text_proto);
+    AddToDatabase(&database_, text_proto);
+  }
   AddToDatabase(&database_, R"pb(
     name: "features.proto"
     syntax: "editions"
@@ -12459,21 +12497,27 @@ TEST_F(DatabaseBackedPoolTest, FeatureLifetimeError) {
   DescriptorPool pool(&database_, &error_collector);
 
   EXPECT_TRUE(pool.FindMessageTypeByName("FooFeatures") == nullptr);
-  EXPECT_EQ(
-      error_collector.text_,
-      "features.proto: FooFeatures: NAME: Feature "
-      "pb.TestFeatures.future_feature wasn't introduced until edition 2024\n");
+  EXPECT_EQ(error_collector.text_,
+            "features.proto: FooFeatures: NAME: Feature "
+            "pb.TestFeatures.future_feature wasn't introduced until edition "
+            "2024 and can't be used in edition 2023\n");
 }
 
 TEST_F(DatabaseBackedPoolTest, FeatureLifetimeErrorUnknownDependencies) {
-  FileDescriptorProto proto;
-  FileDescriptorProto::descriptor()->file()->CopyTo(&proto);
-  std::string text_proto;
-  google::protobuf::TextFormat::PrintToString(proto, &text_proto);
-  AddToDatabase(&database_, text_proto);
-  pb::TestFeatures::descriptor()->file()->CopyTo(&proto);
-  google::protobuf::TextFormat::PrintToString(proto, &text_proto);
-  AddToDatabase(&database_, text_proto);
+  {
+    FileDescriptorProto proto;
+    FileDescriptorProto::descriptor()->file()->CopyTo(&proto);
+    std::string text_proto;
+    google::protobuf::TextFormat::PrintToString(proto, &text_proto);
+    AddToDatabase(&database_, text_proto);
+  }
+  {
+    FileDescriptorProto proto;
+    pb::TestFeatures::descriptor()->file()->CopyTo(&proto);
+    std::string text_proto;
+    google::protobuf::TextFormat::PrintToString(proto, &text_proto);
+    AddToDatabase(&database_, text_proto);
+  }
   AddToDatabase(&database_, R"pb(
     name: "option.proto"
     syntax: "editions"
@@ -12523,10 +12567,10 @@ TEST_F(DatabaseBackedPoolTest, FeatureLifetimeErrorUnknownDependencies) {
   // Verify that the extension does trigger a lifetime error.
   error_collector.text_.clear();
   ASSERT_EQ(pool.FindExtensionByName("foo_extension"), nullptr);
-  EXPECT_EQ(
-      error_collector.text_,
-      "option.proto: foo_extension: NAME: Feature "
-      "pb.TestFeatures.legacy_feature has been removed in edition 2023\n");
+  EXPECT_EQ(error_collector.text_,
+            "option.proto: foo_extension: NAME: Feature "
+            "pb.TestFeatures.legacy_feature has been removed in edition 2023 "
+            "and can't be used in edition 2023\n");
 }
 
 TEST_F(DatabaseBackedPoolTest, DoesntRetryDbUnnecessarily) {

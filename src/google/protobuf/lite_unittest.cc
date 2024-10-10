@@ -960,6 +960,18 @@ TYPED_TEST(LiteTest, AllLite43) {
     EXPECT_TRUE(message2.MergeFromCodedStream(&input_stream));
     EXPECT_EQ(17, message2.oneof_int32());
   }
+
+  // Bytes [ctype = CORD]
+  {
+    protobuf_unittest::TestOneofParsingLite message2;
+    message2.set_oneof_bytes_cord("bytes cord");
+    io::CodedInputStream input_stream(
+        reinterpret_cast<const ::uint8_t*>(serialized.data()),
+        serialized.size());
+    EXPECT_TRUE(message2.MergeFromCodedStream(&input_stream));
+    EXPECT_EQ(17, message2.oneof_int32());
+  }
+
 }
 
 // Verify that we can successfully parse fields of various types within oneof
@@ -1044,6 +1056,18 @@ TYPED_TEST(LiteTest, AllLite44) {
       EXPECT_TRUE(parsed.MergeFromCodedStream(&input_stream));
       EXPECT_EQ(protobuf_unittest::V2_SECOND, parsed.oneof_enum());
     }
+  }
+
+  // Bytes [ctype = CORD]
+  {
+    protobuf_unittest::TestOneofParsingLite original;
+    original.set_oneof_bytes_cord("bytes cord");
+    std::string serialized;
+    EXPECT_TRUE(original.SerializeToString(&serialized));
+    protobuf_unittest::TestOneofParsingLite parsed;
+    EXPECT_TRUE(parsed.MergeFromString(serialized));
+    EXPECT_EQ("bytes cord", std::string(parsed.oneof_bytes_cord()));
+    EXPECT_TRUE(parsed.MergeFromString(serialized));
   }
 
   std::cout << "PASS" << std::endl;
@@ -1329,7 +1353,7 @@ TEST(LiteBasicTest, CodedInputStreamRollback) {
   }
 }
 
-// Two arbitary types
+// Two arbitrary types
 using CastType1 = protobuf_unittest::TestAllTypesLite;
 using CastType2 = protobuf_unittest::TestPackedTypesLite;
 
@@ -1363,9 +1387,10 @@ TEST(LiteTest, DynamicCastMessage) {
 TEST(LiteTest, DynamicCastMessageInvalidReferenceType) {
   CastType1 test_type_1;
   const MessageLite& test_type_1_pointer_const_ref = test_type_1;
-  ASSERT_DEATH(DynamicCastMessage<CastType2>(test_type_1_pointer_const_ref),
-               "Cannot downcast " + test_type_1.GetTypeName() + " to " +
-                   CastType2::default_instance().GetTypeName());
+  ASSERT_DEATH(
+      DynamicCastMessage<CastType2>(test_type_1_pointer_const_ref),
+      absl::StrCat("Cannot downcast ", test_type_1.GetTypeName(), " to ",
+                   CastType2::default_instance().GetTypeName()));
 }
 #endif  // GTEST_HAS_DEATH_TEST
 
@@ -1396,9 +1421,10 @@ TEST(LiteTest, DownCastMessageInvalidPointerType) {
 
   MessageLite* test_type_1_pointer = &test_type_1;
 
-  ASSERT_DEBUG_DEATH(DownCastMessage<CastType2>(test_type_1_pointer),
-                     "Cannot downcast " + test_type_1.GetTypeName() + " to " +
-                         CastType2::default_instance().GetTypeName());
+  ASSERT_DEBUG_DEATH(
+      DownCastMessage<CastType2>(test_type_1_pointer),
+      absl::StrCat("Cannot downcast ", test_type_1.GetTypeName(), " to ",
+                   CastType2::default_instance().GetTypeName()));
 }
 
 TEST(LiteTest, DownCastMessageInvalidReferenceType) {
@@ -1406,9 +1432,10 @@ TEST(LiteTest, DownCastMessageInvalidReferenceType) {
 
   MessageLite& test_type_1_pointer = test_type_1;
 
-  ASSERT_DEBUG_DEATH(DownCastMessage<CastType2>(test_type_1_pointer),
-                     "Cannot downcast " + test_type_1.GetTypeName() + " to " +
-                         CastType2::default_instance().GetTypeName());
+  ASSERT_DEBUG_DEATH(
+      DownCastMessage<CastType2>(test_type_1_pointer),
+      absl::StrCat("Cannot downcast ", test_type_1.GetTypeName(), " to ",
+                   CastType2::default_instance().GetTypeName()));
 }
 #endif  // GTEST_HAS_DEATH_TEST
 

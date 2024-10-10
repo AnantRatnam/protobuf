@@ -24,11 +24,6 @@ namespace google {
 namespace protobuf {
 namespace {
 
-TEST(AnyMetadataTest, ConstInit) {
-  PROTOBUF_CONSTINIT static internal::AnyMetadata metadata(nullptr, nullptr);
-  (void)metadata;
-}
-
 TEST(AnyTest, TestPackAndUnpack) {
   protobuf_unittest::TestAny submessage;
   submessage.set_int32_value(12345);
@@ -45,9 +40,9 @@ TEST(AnyTest, TestPackAndUnpack) {
 }
 
 TEST(AnyTest, TestPackFromSerializationExceedsSizeLimit) {
-#if defined(_MSC_VER) && defined(_M_IX86)
-  GTEST_SKIP() << "This toolchain can't allocate that much memory.";
-#endif
+  if (sizeof(size_t) == 4) {
+    GTEST_SKIP() << "This toolchain can't allocate that much memory.";
+  }
   protobuf_unittest::TestAny submessage;
   submessage.mutable_text()->resize(INT_MAX, 'a');
   protobuf_unittest::TestAny message;

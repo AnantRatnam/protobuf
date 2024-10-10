@@ -146,18 +146,23 @@ public final class TextFormat {
      * DEBUG_MULTILINE.compareTo(PRINTER_PRINT_TO_STRING) > 0. The inverse is not necessarily true.
      */
     static enum FieldReporterLevel {
-      NO_REPORT,
-      PRINT,
-      PRINTER_PRINT_TO_STRING,
-      TEXTFORMAT_PRINT_TO_STRING,
-      PRINT_UNICODE,
-      SHORT_DEBUG_STRING,
-      LEGACY_MULTILINE,
-      LEGACY_SINGLE_LINE,
-      DEBUG_MULTILINE,
-      DEBUG_SINGLE_LINE,
-      ABSTRACT_TO_STRING,
-      ABSTRACT_MUTABLE_TO_STRING
+      NO_REPORT(0),
+      PRINT(1),
+      PRINTER_PRINT_TO_STRING(2),
+      TEXTFORMAT_PRINT_TO_STRING(3),
+      PRINT_UNICODE(4),
+      SHORT_DEBUG_STRING(5),
+      LEGACY_MULTILINE(6),
+      LEGACY_SINGLE_LINE(7),
+      DEBUG_MULTILINE(8),
+      DEBUG_SINGLE_LINE(9),
+      ABSTRACT_TO_STRING(10),
+      ABSTRACT_MUTABLE_TO_STRING(11);
+      private final int index;
+
+      FieldReporterLevel(int index) {
+        this.index = index;
+      }
     }
 
     /** Whether to escape non ASCII characters with backslash and octal. */
@@ -563,51 +568,17 @@ public final class TextFormat {
       }
     }
 
-    private boolean shouldRedactOptionValue(EnumValueDescriptor optionValue) {
-      if (optionValue.getOptions().hasDebugRedact()) {
-        return optionValue.getOptions().getDebugRedact();
-      }
-      return false;
-    }
-
     // The criteria for redacting a field is as follows: 1) The enablingSafeDebugFormat printer
-    // option
-    // must be on. 2) The field must be marked by a debug_redact=true option, or is marked by an
-    // option with an enum value that is marked by a debug_redact=true option.
-    @SuppressWarnings("unchecked") // List<EnumValueDescriptor> guaranteed by protobuf runtime.
+    // option must be on. 2) The field must be considered "sensitive". A sensitive field can be
+    // marked as sensitive via two methods: a) via a direct debug_redact=true annotation on the
+    // field, b) via an enum field marked with debug_redact=true that is within the proto's
+    // FieldOptions, either directly or indirectly via a message option.
     private boolean shouldRedact(final FieldDescriptor field, TextGenerator generator) {
       // Skip checking if it's sensitive and potentially reporting it if we don't care about either.
       if (!shouldReport(generator.fieldReporterLevel) && !enablingSafeDebugFormat) {
         return false;
       }
-      boolean isSensitive = false;
-      if (field.getOptions().hasDebugRedact() && field.getOptions().getDebugRedact()) {
-        isSensitive = true;
-      } else {
-        // Iterate through every option; if it's an enum, we check each enum value for debug_redact.
-        for (Map.Entry<Descriptors.FieldDescriptor, Object> entry :
-            field.getOptions().getAllFields().entrySet()) {
-          Descriptors.FieldDescriptor option = entry.getKey();
-          if (option.getType() != Descriptors.FieldDescriptor.Type.ENUM) {
-            continue;
-          }
-          if (option.isRepeated()) {
-            for (EnumValueDescriptor value : (List<EnumValueDescriptor>) entry.getValue()) {
-              if (shouldRedactOptionValue(value)) {
-                isSensitive = true;
-                break;
-              }
-            }
-          } else {
-            EnumValueDescriptor optionValue = (EnumValueDescriptor) entry.getValue();
-            if (shouldRedactOptionValue(optionValue)) {
-              isSensitive = true;
-              break;
-            }
-          }
-        }
-      }
-      return isSensitive && enablingSafeDebugFormat;
+      return field.isSensitive() && enablingSafeDebugFormat;
     }
 
     private boolean shouldReport(FieldReporterLevel level) {

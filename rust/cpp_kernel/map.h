@@ -78,8 +78,8 @@ auto MakeCleanup(T value) {
     return google::protobuf::internal::UntypedMapIterator::FromTyped(m->cbegin());      \
   }                                                                           \
   void proto2_rust_thunk_Map_##rust_key_ty##_##rust_value_ty##_iter_get(      \
-      const google::protobuf::internal::UntypedMapIterator* iter, int32_t,              \
-      ffi_key_ty* key, ffi_view_ty* value) {                                  \
+      const google::protobuf::internal::UntypedMapIterator* iter, ffi_key_ty* key,      \
+      ffi_view_ty* value) {                                                   \
     auto typed_iter =                                                         \
         iter->ToTyped<google::protobuf::Map<key_ty, value_ty>::const_iterator>();       \
     const auto& cpp_key = typed_iter->first;                                  \
@@ -116,7 +116,7 @@ auto MakeCleanup(T value) {
   __PB_RUST_EXPOSE_SCALAR_MAP_METHODS(                                      \
       std::string, ProtoString, google::protobuf::rust::PtrAndLen,                    \
       std::string(key.ptr, key.len),                                        \
-      google::protobuf::rust::PtrAndLen(cpp_key.data(), cpp_key.size()), value_ty,    \
+      (google::protobuf::rust::PtrAndLen{cpp_key.data(), cpp_key.size()}), value_ty,  \
       rust_value_ty, ffi_view_ty, ffi_value_ty, to_cpp_value, to_ffi_value);
 
 #endif  // GOOGLE_PROTOBUF_RUST_CPP_KERNEL_MAP_H__

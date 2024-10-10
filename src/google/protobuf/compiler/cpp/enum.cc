@@ -24,9 +24,11 @@
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/cpp/generator.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/cpp/names.h"
+#include "google/protobuf/compiler/cpp/options.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/generated_enum_util.h"
 
@@ -42,6 +44,7 @@ absl::flat_hash_map<absl::string_view, std::string> EnumVars(
     const EnumValueDescriptor* min, const EnumValueDescriptor* max) {
   auto classname = ClassName(enum_, false);
   return {
+      {"DEPRECATED", enum_->options().deprecated() ? "[[deprecated]]" : ""},
       {"Enum", std::string(enum_->name())},
       {"Enum_", ResolveKeyword(enum_->name())},
       {"Msg_Enum", classname},
@@ -160,7 +163,7 @@ void EnumGenerator::GenerateDefinition(io::Printer* p) {
            }},
       },
       R"cc(
-        enum $Msg_Enum_annotated$ : int {
+        enum $DEPRECATED $$Msg_Enum_annotated$ : int {
           $values$,
           $open_enum_sentinels$,
         };

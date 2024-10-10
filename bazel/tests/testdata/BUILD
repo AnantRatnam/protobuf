@@ -1,4 +1,9 @@
-package(default_visibility = ["//visibility:public"])
+load("//bazel/toolchains:proto_lang_toolchain.bzl", "proto_lang_toolchain")
+
+package(
+    default_applicable_licenses = ["//:license"],
+    default_visibility = ["//visibility:public"],
+)
 
 proto_lang_toolchain(
     name = "toolchain",

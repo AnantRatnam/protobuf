@@ -22,7 +22,6 @@
 #include <cstring>
 #include <functional>
 #include <initializer_list>
-#include <iostream>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -40,6 +39,7 @@
 #include "absl/base/const_init.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -257,6 +257,16 @@ template <typename T>
 using IntT = int;
 template <typename T>
 using PointerT = T*;
+
+// State that we gather during EstimatedMemoryUsed while on the lock, but we
+// will use outside the lock.
+struct EstimatedMemoryUsedState {
+  // We can't call SpaceUsed under the lock because it uses reflection and can
+  // potentially deadlock if it requires to load new files into the pool.
+  // NOTE: Messages added here must not be modified or destroyed outside the
+  // lock while the pool is alive.
+  std::vector<const Message*> messages;
+};
 
 // Manages an allocation of sequential arrays of type `T...`.
 // It is more space efficient than storing N (ptr, size) pairs, by storing only
@@ -572,6 +582,13 @@ class FlatAllocatorImpl {
   TypeMap<IntT, T...> total_;
   TypeMap<IntT, T...> used_;
 };
+
+static auto DisableTracking() {
+  bool old_value = internal::cpp::IsTrackingEnabled();
+  internal::cpp::IsTrackingEnabledVar() = false;
+  return absl::MakeCleanup(
+      [=] { internal::cpp::IsTrackingEnabledVar() = old_value; });
+}
 
 }  // namespace
 
@@ -3557,8 +3574,10 @@ void Descriptor::DebugString(int depth, std::string* contents,
   if (reserved_name_count() > 0) {
     absl::SubstituteAndAppend(contents, "$0  reserved ", prefix);
     for (int i = 0; i < reserved_name_count(); i++) {
-      absl::SubstituteAndAppend(contents, "\"$0\", ",
-                                absl::CEscape(reserved_name(i)));
+      absl::SubstituteAndAppend(
+          contents,
+          file()->edition() < Edition::EDITION_2023 ? "\"$0\", " : "$0, ",
+          absl::CEscape(reserved_name(i)));
     }
     contents->replace(contents->size() - 2, 2, ";\n");
   }
@@ -3777,8 +3796,10 @@ void EnumDescriptor::DebugString(
   if (reserved_name_count() > 0) {
     absl::SubstituteAndAppend(contents, "$0  reserved ", prefix);
     for (int i = 0; i < reserved_name_count(); i++) {
-      absl::SubstituteAndAppend(contents, "\"$0\", ",
-                                absl::CEscape(reserved_name(i)));
+      absl::SubstituteAndAppend(
+          contents,
+          file()->edition() < Edition::EDITION_2023 ? "\"$0\", " : "$0, ",
+          absl::CEscape(reserved_name(i)));
     }
     contents->replace(contents->size() - 2, 2, ";\n");
   }
@@ -6157,20 +6178,24 @@ FileDescriptor* DescriptorBuilder::BuildFileImpl(
 
     // Handle feature resolution.  This must occur after option interpretation,
     // but before validation.
-    internal::VisitDescriptors(
-        *result, proto, [&](const auto& descriptor, const auto& proto) {
-          using OptionsT =
-              typename std::remove_const<typename std::remove_pointer<
-                  decltype(descriptor.options_)>::type>::type;
-          using DescriptorT = typename std::remove_const<
-              typename std::remove_reference<decltype(descriptor)>::type>::type;
+    {
+      auto cleanup = DisableTracking();
+      internal::VisitDescriptors(
+          *result, proto, [&](const auto& descriptor, const auto& proto) {
+            using OptionsT =
+                typename std::remove_const<typename std::remove_pointer<
+                    decltype(descriptor.options_)>::type>::type;
+            using DescriptorT =
+                typename std::remove_const<typename std::remove_reference<
+                    decltype(descriptor)>::type>::type;
 
-          ResolveFeatures(
-              proto, const_cast<DescriptorT*>(&descriptor),
-              const_cast<  // NOLINT(google3-runtime-proto-const-cast)
-                  OptionsT*>(descriptor.options_),
-              alloc);
-        });
+            ResolveFeatures(
+                proto, const_cast<DescriptorT*>(&descriptor),
+                const_cast<  // NOLINT(google3-runtime-proto-const-cast)
+                    OptionsT*>(descriptor.options_),
+                alloc);
+          });
+    }
 
     internal::VisitDescriptors(*result, [&](const FieldDescriptor& field) {
       if (result->edition() >= Edition::EDITION_2024 &&
@@ -7931,32 +7956,6 @@ void DescriptorBuilder::ValidateOptions(const FieldDescriptor* field,
 
   ValidateFieldFeatures(field, proto);
 
-  auto edition = field->file()->edition();
-  auto& field_options = field->options();
-
-  if (field_options.has_ctype()) {
-    if (edition == Edition::EDITION_2023) {
-      if (field->cpp_type() != FieldDescriptor::CPPTYPE_STRING) {
-        AddError(field->full_name(), proto,
-                 DescriptorPool::ErrorCollector::TYPE,
-                 absl::StrFormat("Field %s specifies ctype, but is not a "
-                                 "string nor bytes field.",
-                                 field->full_name())
-                     .c_str());
-      }
-      if (field_options.ctype() == FieldOptions::CORD) {
-        if (field->is_extension()) {
-          AddError(field->full_name(), proto,
-                   DescriptorPool::ErrorCollector::TYPE,
-                   absl::StrFormat("Extension %s specifies ctype=CORD which is "
-                                   "not supported for extensions.",
-                                   field->full_name())
-                       .c_str());
-        }
-      }
-    }
-  }
-
   // Only message type fields may be lazy.
   if (field->options().lazy() || field->options().unverified_lazy()) {
     if (field->type() != FieldDescriptor::TYPE_MESSAGE) {
@@ -8922,11 +8921,12 @@ bool DescriptorBuilder::OptionInterpreter::InterpretSingleOption(
         new UnknownFieldSet());
     switch ((*iter)->type()) {
       case FieldDescriptor::TYPE_MESSAGE: {
-        std::string* outstr =
-            parent_unknown_fields->AddLengthDelimited((*iter)->number());
-        ABSL_CHECK(unknown_fields->SerializeToString(outstr))
+        std::string outstr;
+        ABSL_CHECK(unknown_fields->SerializeToString(&outstr))
             << "Unexpected failure while serializing option submessage "
             << debug_msg_name << "\".";
+        parent_unknown_fields->AddLengthDelimited((*iter)->number(),
+                                                  std::move(outstr));
         break;
       }
 
@@ -9330,8 +9330,8 @@ bool DescriptorBuilder::OptionInterpreter::SetOptionValue(
         // the pool's mutex, and the latter method locks it again.
         Symbol symbol =
             builder_->FindSymbolNotEnforcingDeps(fully_qualified_name);
-        if (auto* candicate_descriptor = symbol.enum_value_descriptor()) {
-          if (candicate_descriptor->type() != enum_type) {
+        if (auto* candidate_descriptor = symbol.enum_value_descriptor()) {
+          if (candidate_descriptor->type() != enum_type) {
             return AddValueError([&] {
               return absl::StrCat(
                   "Enum type \"", enum_type->full_name(),
@@ -9340,7 +9340,7 @@ bool DescriptorBuilder::OptionInterpreter::SetOptionValue(
                   "\". This appears to be a value from a sibling type.");
             });
           } else {
-            enum_value = candicate_descriptor;
+            enum_value = candidate_descriptor;
           }
         }
       } else {
@@ -9656,8 +9656,8 @@ void FieldDescriptor::InternalTypeOnceInit() const {
       } else {
         name = lazy_default_value_enum_name;
       }
-      Symbol result = file()->pool()->CrossLinkOnDemandHelper(name, true);
-      default_value_enum_ = result.enum_value_descriptor();
+      Symbol result_enum = file()->pool()->CrossLinkOnDemandHelper(name, true);
+      default_value_enum_ = result_enum.enum_value_descriptor();
     } else {
       default_value_enum_ = nullptr;
     }
@@ -9782,6 +9782,8 @@ void LazyDescriptor::Once(const ServiceDescriptor* service) {
 }
 
 bool ParseNoReflection(absl::string_view from, google::protobuf::MessageLite& to) {
+  auto cleanup = DisableTracking();
+
   to.Clear();
   const char* ptr;
   internal::ParseContext ctx(io::CodedInputStream::GetDefaultRecursionLimit(),

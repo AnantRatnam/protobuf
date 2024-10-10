@@ -10,7 +10,8 @@
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "upb_generator/keywords.h"
+#include "google/protobuf/compiler/code_generator.h"
+#include "google/protobuf/compiler/hpb/keywords.h"
 
 namespace google::protobuf::hpb_generator {
 namespace protobuf = ::proto2;
@@ -91,7 +92,7 @@ std::string ClassName(const protobuf::Descriptor* descriptor) {
   }
   if (parent) res += ClassName(parent) + "_";
   absl::StrAppend(&res, descriptor->name());
-  return ::upb::generator::ResolveKeywordConflict(res);
+  return ResolveKeywordConflict(res);
 }
 
 std::string QualifiedClassName(const protobuf::Descriptor* descriptor) {
@@ -104,19 +105,19 @@ std::string QualifiedInternalClassName(const protobuf::Descriptor* descriptor) {
 }
 
 std::string CppSourceFilename(const google::protobuf::FileDescriptor* file) {
-  return StripExtension(file->name()) + ".upb.proto.cc";
+  return compiler::StripProto(file->name()) + ".upb.proto.cc";
 }
 
 std::string ForwardingHeaderFilename(const google::protobuf::FileDescriptor* file) {
-  return StripExtension(file->name()) + ".upb.fwd.h";
+  return compiler::StripProto(file->name()) + ".upb.fwd.h";
 }
 
 std::string UpbCFilename(const google::protobuf::FileDescriptor* file) {
-  return StripExtension(file->name()) + ".upb.h";
+  return compiler::StripProto(file->name()) + ".upb.h";
 }
 
 std::string CppHeaderFilename(const google::protobuf::FileDescriptor* file) {
-  return StripExtension(file->name()) + ".upb.proto.h";
+  return compiler::StripProto(file->name()) + ".upb.proto.h";
 }
 
 void WriteStartNamespace(const protobuf::FileDescriptor* file, Output& output) {

@@ -6,7 +6,9 @@
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/absl_log.h"
 #include "google/protobuf/map.h"
+#include "google/protobuf/message.h"
 #include "google/protobuf/message_lite.h"
 #include "rust/cpp_kernel/strings.h"
 
@@ -29,6 +31,26 @@ template <typename Key>
 using KeyMap = internal::KeyMapBase<
     internal::KeyForBase<typename FromViewType<Key>::type>>;
 
+internal::MapNodeSizeInfoT GetSizeInfo(size_t key_size,
+                                       const google::protobuf::MessageLite* value) {
+  // Each map node consists of a NodeBase followed by a std::pair<Key, Value>.
+  // We need to compute the offset of the value and the total size of the node.
+  size_t node_and_key_size = sizeof(internal::NodeBase) + key_size;
+  uint16_t value_size;
+  uint8_t value_alignment;
+  internal::RustMapHelper::GetSizeAndAlignment(value, &value_size,
+                                               &value_alignment);
+  // Round node_and_key_size up to the nearest multiple of value_alignment.
+  uint16_t offset =
+      (((node_and_key_size - 1) / value_alignment) + 1) * value_alignment;
+  return internal::RustMapHelper::MakeSizeInfo(offset + value_size, offset);
+}
+
+template <typename Key>
+internal::MapNodeSizeInfoT GetSizeInfo(const google::protobuf::MessageLite* value) {
+  return GetSizeInfo(sizeof(Key), value);
+}
+
 template <typename Key>
 void DestroyMapNode(internal::UntypedMapBase* m, internal::NodeBase* node,
                     internal::MapNodeSizeInfoT size_info) {
@@ -41,17 +63,29 @@ void DestroyMapNode(internal::UntypedMapBase* m, internal::NodeBase* node,
 }
 
 template <typename Key>
-bool Insert(internal::UntypedMapBase* m, internal::MapNodeSizeInfoT size_info,
-            Key key, MessageLite* value,
-            void (*placement_new)(void*, MessageLite*)) {
+bool Insert(internal::UntypedMapBase* m, Key key, MessageLite* value) {
+  internal::MapNodeSizeInfoT size_info =
+      GetSizeInfo<typename FromViewType<Key>::type>(value);
   internal::NodeBase* node = internal::RustMapHelper::AllocNode(m, size_info);
   if constexpr (std::is_same<Key, PtrAndLen>::value) {
     new (node->GetVoidKey()) std::string(key.ptr, key.len);
   } else {
     *static_cast<Key*>(node->GetVoidKey()) = key;
   }
-  void* value_ptr = node->GetVoidValue(size_info);
-  placement_new(value_ptr, value);
+
+  MessageLite* new_msg = internal::RustMapHelper::PlacementNew(
+      value, node->GetVoidValue(size_info));
+  auto* full_msg = DynamicCastMessage<Message>(new_msg);
+
+  // If we are working with a full (non-lite) proto, we reflectively swap the
+  // value into place. Otherwise, we have to perform a copy.
+  if (full_msg != nullptr) {
+    full_msg->GetReflection()->Swap(full_msg,
+                                    DynamicCastMessage<Message>(value));
+  } else {
+    new_msg->CheckTypeAndMergeFrom(*value);
+  }
+
   node = internal::RustMapHelper::InsertOrReplaceNode(
       static_cast<KeyMap<Key>*>(m), node);
   if (node == nullptr) {
@@ -77,8 +111,10 @@ internal::RustMapHelper::NodeAndBucket FindHelper(Map* m,
 }
 
 template <typename Key>
-bool Get(internal::UntypedMapBase* m, internal::MapNodeSizeInfoT size_info,
+bool Get(internal::UntypedMapBase* m, const google::protobuf::MessageLite* prototype,
          Key key, MessageLite** value) {
+  internal::MapNodeSizeInfoT size_info =
+      GetSizeInfo<typename FromViewType<Key>::type>(prototype);
   auto* map_base = static_cast<KeyMap<Key>*>(m);
   internal::RustMapHelper::NodeAndBucket result = FindHelper(map_base, key);
   if (result.node == nullptr) {
@@ -89,8 +125,10 @@ bool Get(internal::UntypedMapBase* m, internal::MapNodeSizeInfoT size_info,
 }
 
 template <typename Key>
-bool Remove(internal::UntypedMapBase* m, internal::MapNodeSizeInfoT size_info,
+bool Remove(internal::UntypedMapBase* m, const google::protobuf::MessageLite* prototype,
             Key key) {
+  internal::MapNodeSizeInfoT size_info =
+      GetSizeInfo<typename FromViewType<Key>::type>(prototype);
   auto* map_base = static_cast<KeyMap<Key>*>(m);
   internal::RustMapHelper::NodeAndBucket result = FindHelper(map_base, key);
   if (result.node == nullptr) {
@@ -103,23 +141,51 @@ bool Remove(internal::UntypedMapBase* m, internal::MapNodeSizeInfoT size_info,
 
 template <typename Key>
 void IterGet(const internal::UntypedMapIterator* iter,
-             internal::MapNodeSizeInfoT size_info, Key* key,
+             const google::protobuf::MessageLite* prototype, Key* key,
              MessageLite** value) {
+  internal::MapNodeSizeInfoT size_info =
+      GetSizeInfo<typename FromViewType<Key>::type>(prototype);
   internal::NodeBase* node = iter->node_;
   if constexpr (std::is_same<Key, PtrAndLen>::value) {
     const std::string* s = static_cast<const std::string*>(node->GetVoidKey());
-    *key = PtrAndLen(s->data(), s->size());
+    *key = PtrAndLen{s->data(), s->size()};
   } else {
     *key = *static_cast<const Key*>(node->GetVoidKey());
   }
   *value = static_cast<MessageLite*>(node->GetVoidValue(size_info));
 }
 
-void ClearMap(internal::UntypedMapBase* m, internal::MapNodeSizeInfoT size_info,
-              bool key_is_string, bool reset_table) {
+// LINT.IfChange(map_key_category)
+enum class MapKeyCategory : uint8_t {
+  kOneByte = 0,
+  kFourBytes = 1,
+  kEightBytes = 2,
+  kStdString = 3,
+};
+// LINT.ThenChange(//depot/google3/third_party/protobuf/rust/cpp.rs:map_key_category)
+
+size_t KeySize(MapKeyCategory category) {
+  switch (category) {
+    case MapKeyCategory::kOneByte:
+      return 1;
+    case MapKeyCategory::kFourBytes:
+      return 4;
+    case MapKeyCategory::kEightBytes:
+      return 8;
+    case MapKeyCategory::kStdString:
+      return sizeof(std::string);
+    default:
+      ABSL_DLOG(FATAL) << "Unexpected value of MapKeyCategory enum";
+  }
+}
+
+void ClearMap(internal::UntypedMapBase* m, MapKeyCategory category,
+              bool reset_table, const google::protobuf::MessageLite* prototype) {
+  internal::MapNodeSizeInfoT size_info =
+      GetSizeInfo(KeySize(category), prototype);
   if (internal::RustMapHelper::IsGlobalEmptyTable(m)) return;
   uint8_t bits = internal::RustMapHelper::kValueIsProto;
-  if (key_is_string) {
+  if (category == MapKeyCategory::kStdString) {
     bits |= internal::RustMapHelper::kKeyIsString;
   }
   internal::RustMapHelper::ClearTable(
@@ -144,17 +210,16 @@ google::protobuf::internal::UntypedMapBase* proto2_rust_map_new() {
 }
 
 void proto2_rust_map_free(google::protobuf::internal::UntypedMapBase* m,
-                          bool key_is_string,
-                          google::protobuf::internal::MapNodeSizeInfoT size_info) {
-  google::protobuf::rust::ClearMap(m, size_info, key_is_string,
-                         /* reset_table = */ false);
+                          google::protobuf::rust::MapKeyCategory category,
+                          const google::protobuf::MessageLite* prototype) {
+  google::protobuf::rust::ClearMap(m, category, /* reset_table = */ false, prototype);
   delete m;
 }
 
 void proto2_rust_map_clear(google::protobuf::internal::UntypedMapBase* m,
-                           bool key_is_string,
-                           google::protobuf::internal::MapNodeSizeInfoT size_info) {
-  google::protobuf::rust::ClearMap(m, size_info, key_is_string, /* reset_table = */ true);
+                           google::protobuf::rust::MapKeyCategory category,
+                           const google::protobuf::MessageLite* prototype) {
+  google::protobuf::rust::ClearMap(m, category, /* reset_table = */ true, prototype);
 }
 
 size_t proto2_rust_map_size(google::protobuf::internal::UntypedMapBase* m) {
@@ -166,33 +231,31 @@ google::protobuf::internal::UntypedMapIterator proto2_rust_map_iter(
   return m->begin();
 }
 
-#define DEFINE_KEY_SPECIFIC_MAP_OPERATIONS(cpp_type, suffix)              \
-  bool proto2_rust_map_insert_##suffix(                                   \
-      google::protobuf::internal::UntypedMapBase* m,                                \
-      google::protobuf::internal::MapNodeSizeInfoT size_info, cpp_type key,         \
-      google::protobuf::MessageLite* value,                                         \
-      void (*placement_new)(void*, google::protobuf::MessageLite*)) {               \
-    return google::protobuf::rust::Insert(m, size_info, key, value, placement_new); \
-  }                                                                       \
-                                                                          \
-  bool proto2_rust_map_get_##suffix(                                      \
-      google::protobuf::internal::UntypedMapBase* m,                                \
-      google::protobuf::internal::MapNodeSizeInfoT size_info, cpp_type key,         \
-      google::protobuf::MessageLite** value) {                                      \
-    return google::protobuf::rust::Get(m, size_info, key, value);                   \
-  }                                                                       \
-                                                                          \
-  bool proto2_rust_map_remove_##suffix(                                   \
-      google::protobuf::internal::UntypedMapBase* m,                                \
-      google::protobuf::internal::MapNodeSizeInfoT size_info, cpp_type key) {       \
-    return google::protobuf::rust::Remove(m, size_info, key);                       \
-  }                                                                       \
-                                                                          \
-  void proto2_rust_map_iter_get_##suffix(                                 \
-      const google::protobuf::internal::UntypedMapIterator* iter,                   \
-      google::protobuf::internal::MapNodeSizeInfoT size_info, cpp_type* key,        \
-      google::protobuf::MessageLite** value) {                                      \
-    return google::protobuf::rust::IterGet(iter, size_info, key, value);            \
+#define DEFINE_KEY_SPECIFIC_MAP_OPERATIONS(cpp_type, suffix)                 \
+  bool proto2_rust_map_insert_##suffix(google::protobuf::internal::UntypedMapBase* m,  \
+                                       cpp_type key,                         \
+                                       google::protobuf::MessageLite* value) {         \
+    return google::protobuf::rust::Insert(m, key, value);                              \
+  }                                                                          \
+                                                                             \
+  bool proto2_rust_map_get_##suffix(google::protobuf::internal::UntypedMapBase* m,     \
+                                    const google::protobuf::MessageLite* prototype,    \
+                                    cpp_type key,                            \
+                                    google::protobuf::MessageLite** value) {           \
+    return google::protobuf::rust::Get(m, prototype, key, value);                      \
+  }                                                                          \
+                                                                             \
+  bool proto2_rust_map_remove_##suffix(google::protobuf::internal::UntypedMapBase* m,  \
+                                       const google::protobuf::MessageLite* prototype, \
+                                       cpp_type key) {                       \
+    return google::protobuf::rust::Remove(m, prototype, key);                          \
+  }                                                                          \
+                                                                             \
+  void proto2_rust_map_iter_get_##suffix(                                    \
+      const google::protobuf::internal::UntypedMapIterator* iter,                      \
+      const google::protobuf::MessageLite* prototype, cpp_type* key,                   \
+      google::protobuf::MessageLite** value) {                                         \
+    return google::protobuf::rust::IterGet(iter, prototype, key, value);               \
   }
 
 DEFINE_KEY_SPECIFIC_MAP_OPERATIONS(int32_t, i32)
@@ -219,10 +282,10 @@ __PB_RUST_EXPOSE_SCALAR_MAP_METHODS_FOR_VALUE_TYPE(int64_t, i64, int64_t,
 __PB_RUST_EXPOSE_SCALAR_MAP_METHODS_FOR_VALUE_TYPE(
     std::string, ProtoBytes, google::protobuf::rust::PtrAndLen, std::string*,
     std::move(*value),
-    google::protobuf::rust::PtrAndLen(cpp_value.data(), cpp_value.size()));
+    (google::protobuf::rust::PtrAndLen{cpp_value.data(), cpp_value.size()}));
 __PB_RUST_EXPOSE_SCALAR_MAP_METHODS_FOR_VALUE_TYPE(
     std::string, ProtoString, google::protobuf::rust::PtrAndLen, std::string*,
     std::move(*value),
-    google::protobuf::rust::PtrAndLen(cpp_value.data(), cpp_value.size()));
+    (google::protobuf::rust::PtrAndLen{cpp_value.data(), cpp_value.size()}));
 
 }  // extern "C"

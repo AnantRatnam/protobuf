@@ -50,10 +50,6 @@ void UntypedMapBase::EraseFromTree(map_index_t b,
   }
 }
 
-map_index_t UntypedMapBase::VariantBucketNumber(VariantKey key) const {
-  return BucketNumberFromHash(key.Hash());
-}
-
 void UntypedMapBase::InsertUniqueInTree(map_index_t b, GetKey get_key,
                                         NodeBase* node) {
   if (TableEntryIsNonEmptyList(b)) {
@@ -120,7 +116,7 @@ void UntypedMapBase::ClearTable(const ClearInput input) {
   ABSL_DCHECK_NE(num_buckets_, kGlobalEmptyTableSize);
 
   if (alloc_.arena() == nullptr) {
-    const auto loop = [=](auto destroy_node) {
+    const auto loop = [&, this](auto destroy_node) {
       const TableEntryPtr* table = table_;
       for (map_index_t b = index_of_first_non_null_, end = num_buckets_;
            b < end; ++b) {
@@ -162,14 +158,14 @@ void UntypedMapBase::ClearTable(const ClearInput input) {
       case kValueIsProto:
         loop([size_info = input.size_info](NodeBase* node) {
           static_cast<MessageLite*>(node->GetVoidValue(size_info))
-              ->DestroyInstance(false);
+              ->DestroyInstance();
         });
         break;
       case kKeyIsString | kValueIsProto:
         loop([size_info = input.size_info](NodeBase* node) {
           static_cast<std::string*>(node->GetVoidKey())->~basic_string();
           static_cast<MessageLite*>(node->GetVoidValue(size_info))
-              ->DestroyInstance(false);
+              ->DestroyInstance();
         });
         break;
       case kUseDestructFunc:

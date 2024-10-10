@@ -63,7 +63,7 @@ int ProtobufMain(int argc, char* argv[]) {
 #endif
 
   // Proto2 Kotlin
-  java::KotlinGenerator kt_generator;
+  kotlin::KotlinGenerator kt_generator;
   cli.RegisterGenerator("--kotlin_out", "--kotlin_opt", &kt_generator,
                         "Generate Kotlin file.");
 
@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
     std::string* multibyte_string = new auto(ToMultiByteUtf8String(wargv[i]));
     argv_mbcs[i] = const_cast<char*>(multibyte_string->c_str());
   }
-  return google::protobuf::compiler::ProtobufMain(argc, argv);
+  return google::protobuf::compiler::ProtobufMain(argc, argv_mbcs);
 }
 #else
 int main(int argc, char* argv[]) {

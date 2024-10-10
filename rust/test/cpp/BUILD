@@ -38,9 +38,7 @@ proto_library(
 rust_cc_proto_library(
     name = "optimize_for_lite_cpp_rust_proto",
     testonly = True,
-    visibility = [
-        "//rust/test/shared:__subpackages__",
-    ],
+    visibility = ["//visibility:private"],
     deps = [":optimize_for_lite_proto"],
 )
 
@@ -50,7 +48,7 @@ rust_test(
     deps = [
         ":debug_cpp_rust_proto",
         ":optimize_for_lite_cpp_rust_proto",
-        "//rust:protobuf_cpp",
+        "//rust:protobuf_cpp_export",
         "@crate_index//:googletest",
     ],
 )

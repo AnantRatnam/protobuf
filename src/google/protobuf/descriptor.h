@@ -2949,19 +2949,6 @@ PROTOBUF_EXPORT bool HasPreservingUnknownEnumSemantics(
 PROTOBUF_EXPORT bool HasHasbit(const FieldDescriptor* field);
 
 #ifndef SWIG
-// For a string field, returns the effective ctype.  If the actual ctype is
-// not supported, returns the default of STRING.
-template <typename FieldDesc = FieldDescriptor,
-          typename FieldOpts = FieldOptions>
-typename FieldOpts::CType EffectiveStringCType(const FieldDesc* field) {
-  // TODO Replace this function with FieldDescriptor::string_type;
-  switch (field->cpp_string_type()) {
-    case FieldDescriptor::CppStringType::kCord:
-      return FieldOpts::CORD;
-    default:
-      return FieldOpts::STRING;
-  }
-}
 
 enum class Utf8CheckMode : uint8_t {
   kStrict = 0,  // Parsing will fail if non UTF-8 data is in string fields.
@@ -2982,6 +2969,17 @@ PROTOBUF_EXPORT bool IsGroupLike(const FieldDescriptor& field);
 // pre-main via static initialization.  This has to be done for our bootstrapped
 // protos to avoid linker bloat in lite runtimes.
 PROTOBUF_EXPORT bool IsLazilyInitializedFile(absl::string_view filename);
+
+// Returns true during internal calls that should avoid calling trackers.  These
+// calls can be particularly dangerous during build steps like feature
+// resolution, where a MergeFrom call can wind up in a deadlock.
+PROTOBUF_EXPORT inline bool& IsTrackingEnabledVar() {
+  static PROTOBUF_THREAD_LOCAL bool is_tracking_enabled = true;
+  return is_tracking_enabled;
+}
+PROTOBUF_EXPORT inline bool IsTrackingEnabled() {
+  return ABSL_PREDICT_TRUE(IsTrackingEnabledVar());
+}
 
 template <typename F>
 auto VisitDescriptorsInFileOrder(const Descriptor* desc,

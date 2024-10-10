@@ -234,8 +234,7 @@ void SingularString::GenerateAccessorDeclarations(io::Printer* p) const {
   // files that applied the ctype.  The field can still be accessed via the
   // reflection interface since the reflection interface is independent of
   // the string's underlying representation.
-  bool unknown_ctype =
-      field_->options().ctype() != internal::cpp::EffectiveStringCType(field_);
+  bool unknown_ctype = GetDeclaredStringType() != pb::CppFeatures::STRING;
 
   if (unknown_ctype) {
     p->Emit(R"cc(
@@ -361,9 +360,9 @@ void SingularString::ReleaseImpl(io::Printer* p) const {
 
   p->Emit(R"cc(
     auto* released = $field_$.Release();
-#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
-    $field_$.Set("", $set_args$);
-#endif  // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    if ($pbi$::DebugHardenForceCopyDefaultString()) {
+      $field_$.Set("", $set_args$);
+    }
     return released;
   )cc");
 }
@@ -406,11 +405,9 @@ void SingularString::SetAllocatedImpl(io::Printer* p) const {
 
   if (EmptyDefault()) {
     p->Emit(R"cc(
-#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
-      if ($field_$.IsDefault()) {
+      if ($pbi$::DebugHardenForceCopyDefaultString() && $field_$.IsDefault()) {
         $field_$.Set("", $set_args$);
       }
-#endif  // PROTOBUF_FORCE_COPY_DEFAULT_STRING
     )cc");
   }
 }
@@ -618,9 +615,9 @@ void SingularString::GenerateConstructorCode(io::Printer* p) const {
 
   if (IsString(field_) && EmptyDefault()) {
     p->Emit(R"cc(
-#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
-      $field_$.Set("", GetArena());
-#endif  // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+      if ($pbi$::DebugHardenForceCopyDefaultString()) {
+        $field_$.Set("", GetArena());
+      }
     )cc");
   }
 }
@@ -675,7 +672,7 @@ void SingularString::GenerateDestructorCode(io::Printer* p) const {
   }
 
   p->Emit(R"cc(
-    $field_$.Destroy();
+    this_.$field_$.Destroy();
   )cc");
 }
 
@@ -785,7 +782,7 @@ class RepeatedString : public FieldGeneratorBase {
   void GenerateDestructorCode(io::Printer* p) const override {
     if (should_split()) {
       p->Emit(R"cc(
-        $field_$.DeleteIfNotDefault();
+        this_.$field_$.DeleteIfNotDefault();
       )cc");
     }
   }
@@ -822,8 +819,7 @@ class RepeatedString : public FieldGeneratorBase {
 };
 
 void RepeatedString::GenerateAccessorDeclarations(io::Printer* p) const {
-  bool unknown_ctype =
-      field_->options().ctype() != internal::cpp::EffectiveStringCType(field_);
+  bool unknown_ctype = GetDeclaredStringType() != pb::CppFeatures::STRING;
 
   if (unknown_ctype) {
     p->Emit(R"cc(

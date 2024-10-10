@@ -16,9 +16,8 @@
 
 #include "absl/strings/string_view.h"
 #include "google/protobuf/hpb/backend/upb/interop.h"
-#include "google/protobuf/hpb/hpb.h"
+#include "google/protobuf/hpb/internal/template_help.h"
 #include "google/protobuf/hpb/repeated_field_iterator.h"
-#include "google/protobuf/hpb/traits.h"
 #include "upb/base/string_view.h"
 #include "upb/mem/arena.h"
 #include "upb/message/array.h"
@@ -101,7 +100,7 @@ class RepeatedFieldProxy
   // T::CProxy [] operator specialization.
   typename T::CProxy operator[](size_t n) const {
     upb_MessageValue message_value = upb_Array_Get(this->arr_, n);
-    return ::hpb::internal::CreateMessage<typename std::remove_const_t<T>>(
+    return ::hpb::interop::upb::MakeCHandle<typename std::remove_const_t<T>>(
         (upb_Message*)message_value.msg_val, this->arena_);
   }
 
@@ -110,8 +109,7 @@ class RepeatedFieldProxy
   template <int&... DeductionBlocker, bool b = !kIsConst,
             typename = std::enable_if_t<b>>
   typename T::Proxy operator[](size_t n) {
-    return ::hpb::internal::CreateMessageProxy<T>(this->GetMessage(n),
-                                                  this->arena_);
+    return hpb::interop::upb::MakeHandle<T>(this->GetMessage(n), this->arena_);
   }
 
   // Mutable message reference specialization.
@@ -132,7 +130,7 @@ class RepeatedFieldProxy
     upb_MessageValue message_value;
     message_value.msg_val =
         ::hpb::internal::PrivateAccess::GetInternalMsg(&msg);
-    upb_Arena_Fuse(::hpb::internal::GetArena(&msg), this->arena_);
+    upb_Arena_Fuse(hpb::interop::upb::GetArena(&msg), this->arena_);
     upb_Array_Append(this->arr_, message_value, this->arena_);
     T moved_msg = std::move(msg);
   }

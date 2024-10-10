@@ -377,7 +377,7 @@ class PROTOBUF_EXPORT Message : public MessageLite {
   // Get a struct containing the metadata for the Message, which is used in turn
   // to implement GetDescriptor() and GetReflection() above.
   Metadata GetMetadata() const;
-  static Metadata GetMetadataImpl(const ClassDataFull& data);
+  static Metadata GetMetadataImpl(const internal::ClassDataFull& data);
 
   // For CODE_SIZE types
   static bool IsInitializedImpl(const MessageLite&);
@@ -388,9 +388,9 @@ class PROTOBUF_EXPORT Message : public MessageLite {
       size_t total_size, const internal::CachedSize* cached_size) const;
 
   // Reflection based version for reflection based types.
-  static absl::string_view GetTypeNameImpl(const ClassData* data);
+  static absl::string_view GetTypeNameImpl(const internal::ClassData* data);
   static void MergeImpl(MessageLite& to, const MessageLite& from);
-  static void ClearImpl(MessageLite& msg);
+  void ClearImpl();
   static size_t ByteSizeLongImpl(const MessageLite& msg);
   static uint8_t* _InternalSerializeImpl(const MessageLite& msg,
                                          uint8_t* target,
@@ -401,7 +401,7 @@ class PROTOBUF_EXPORT Message : public MessageLite {
 
   static size_t SpaceUsedLongImpl(const MessageLite& msg_lite);
 
-  static const DescriptorMethods kDescriptorMethods;
+  static const internal::DescriptorMethods kDescriptorMethods;
 
 };
 
@@ -479,6 +479,7 @@ class PROTOBUF_EXPORT Reflection final {
 
   // Returns true if the given message is a default message instance.
   bool IsDefaultInstance(const Message& message) const {
+    ABSL_DCHECK_EQ(message.GetReflection(), this);
     return schema_.IsDefaultInstance(message);
   }
 
@@ -1233,11 +1234,17 @@ class PROTOBUF_EXPORT Reflection final {
     return schema_.IsFieldInlined(field);
   }
 
-  bool HasBit(const Message& message, const FieldDescriptor* field) const;
-  void SetBit(Message* message, const FieldDescriptor* field) const;
-  inline void ClearBit(Message* message, const FieldDescriptor* field) const;
-  inline void SwapBit(Message* message1, Message* message2,
-                      const FieldDescriptor* field) const;
+  // Returns true if the field is considered to be present.
+  // Requires the input to be 'singular' i.e. non-extension, non-oneof, non-weak
+  // field.
+  // For explicit presence fields, a field is present iff the hasbit is set.
+  // For implicit presence fields, a field is present iff it is nonzero.
+  bool HasFieldSingular(const Message& message,
+                        const FieldDescriptor* field) const;
+  void SetHasBit(Message* message, const FieldDescriptor* field) const;
+  inline void ClearHasBit(Message* message, const FieldDescriptor* field) const;
+  inline void SwapHasBit(Message* message1, Message* message2,
+                         const FieldDescriptor* field) const;
 
   inline const uint32_t* GetInlinedStringDonatedArray(
       const Message& message) const;

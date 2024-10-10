@@ -12,6 +12,7 @@
 #include "google/protobuf/descriptor_database.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/descriptor.pb.h"
+#include "google/protobuf/parse_context.h"
 
 
 namespace google {
@@ -1034,8 +1036,8 @@ bool MergedDescriptorDatabase::FindAllFileNames(
     std::vector<std::string> source_output;
     if (source->FindAllFileNames(&source_output)) {
       output->reserve(output->size() + source_output.size());
-      for (auto& source : source_output) {
-        output->push_back(std::move(source));
+      for (auto& source_out : source_output) {
+        output->push_back(std::move(source_out));
       }
       implemented = true;
     }

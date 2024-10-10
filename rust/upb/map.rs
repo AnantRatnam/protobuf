@@ -7,7 +7,7 @@
 
 use super::opaque_pointee::opaque_pointee;
 use super::{upb_MessageValue, CType, RawArena};
-use std::ptr::NonNull;
+use core::ptr::NonNull;
 
 opaque_pointee!(upb_Map);
 pub type RawMap = NonNull<upb_Map>;
@@ -51,8 +51,21 @@ extern "C" {
 mod tests {
     use super::super::Arena;
     use super::*;
+    use googletest::gtest;
 
-    #[test]
+    #[gtest]
+    fn assert_map_linked() {
+        use crate::assert_linked;
+        assert_linked!(upb_Map_New);
+        assert_linked!(upb_Map_Size);
+        assert_linked!(upb_Map_Insert);
+        assert_linked!(upb_Map_Get);
+        assert_linked!(upb_Map_Delete);
+        assert_linked!(upb_Map_Clear);
+        assert_linked!(upb_Map_Next);
+    }
+
+    #[gtest]
     fn map_ffi_test() {
         // SAFETY: FFI unit test uses C API under expected patterns.
         unsafe {

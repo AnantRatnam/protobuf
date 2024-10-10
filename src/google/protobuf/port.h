@@ -40,6 +40,8 @@ class MessageLite;
 
 namespace internal {
 
+struct MessageTraitsImpl;
+
 template <typename T>
 inline PROTOBUF_ALWAYS_INLINE void StrongPointer(T* var) {
 #if defined(__GNUC__)
@@ -61,10 +63,14 @@ inline PROTOBUF_ALWAYS_INLINE void StrongPointer() {
   asm(".reloc ., BFD_RELOC_NONE, %p0" ::"Ws"(ptr));
 }
 
-template <typename T>
+template <typename T, typename TraitsImpl = MessageTraitsImpl>
 inline PROTOBUF_ALWAYS_INLINE void StrongReferenceToType() {
-  static constexpr auto ptr = T::template GetStrongPointerForType<T>();
-  return StrongPointer<decltype(ptr), ptr>();
+  static constexpr auto ptr =
+      decltype(TraitsImpl::template value<T>)::StrongPointer();
+  // This is identical to the implementation of StrongPointer() above, but it
+  // has to be explicitly inlined here or else Clang 19 will raise an error in
+  // some configurations.
+  asm(".reloc ., BFD_RELOC_NONE, %p0" ::"Ws"(ptr));
 }
 #else   // .reloc
 // Portable fallback. It usually generates a single LEA instruction or
@@ -74,9 +80,10 @@ inline PROTOBUF_ALWAYS_INLINE void StrongPointer() {
   StrongPointer(ptr);
 }
 
-template <typename T>
+template <typename T, typename TraitsImpl = MessageTraitsImpl>
 inline PROTOBUF_ALWAYS_INLINE void StrongReferenceToType() {
-  return StrongPointer(T::template GetStrongPointerForType<T>());
+  return StrongPointer(
+      decltype(TraitsImpl::template value<T>)::StrongPointer());
 }
 #endif  // .reloc
 
@@ -241,15 +248,6 @@ enum { kCacheAlignment = alignof(max_align_t) };  // do the best we can
 // The maximum byte alignment we support.
 enum { kMaxMessageAlignment = 8 };
 
-// Returns true if debug string hardening is required
-inline constexpr bool DebugHardenStringValues() {
-#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
-  return true;
-#else
-  return false;
-#endif
-}
-
 // Returns true if debug hardening for clearing oneof message on arenas is
 // enabled.
 inline constexpr bool DebugHardenClearOneofMessageOnArena() {
@@ -269,9 +267,52 @@ constexpr bool PerformDebugChecks() {
 #endif
 }
 
+// Force copy the default string to a string field so that non-optimized builds
+// have harder-to-rely-on address stability.
+constexpr bool DebugHardenForceCopyDefaultString() {
+  return false;
+}
+
+constexpr bool DebugHardenForceCopyInRelease() {
+  return false;
+}
+
+constexpr bool DebugHardenForceCopyInSwap() {
+  return false;
+}
+
+constexpr bool DebugHardenForceCopyInMove() {
+  return false;
+}
+
+constexpr bool DebugHardenForceAllocationOnConstruction() {
+  return false;
+}
+
+constexpr bool DebugHardenFuzzMessageSpaceUsedLong() {
+  return false;
+}
+
+// Reads n bytes from p, if PerformDebugChecks() is true. This allows ASAN to
+// detect if a range of memory is not valid when we expect it to be. The
+// volatile keyword is necessary here to prevent the compiler from optimizing
+// away the memory reads below.
+inline void AssertBytesAreReadable(const volatile char* p, int n) {
+  if (PerformDebugChecks()) {
+    for (int i = 0; i < n; ++i) {
+      p[i];
+    }
+  }
+}
+
 // Returns true if pointers are 8B aligned, leaving least significant 3 bits
 // available.
 inline constexpr bool PtrIsAtLeast8BAligned() { return alignof(void*) >= 8; }
+
+inline constexpr bool IsLazyParsingSupported() {
+  // We need 3 bits for pointer tagging in lazy parsing.
+  return PtrIsAtLeast8BAligned();
+}
 
 // Prefetch 5 64-byte cache line starting from 7 cache-lines ahead.
 // Constants are somewhat arbitrary and pretty aggressive, but were
@@ -288,6 +329,15 @@ inline PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom7Lines(const void* ptr) {
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 576);
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 640);
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 704);
+}
+
+// Prefetch 5 64-byte cache lines starting from 1 cache-line ahead.
+inline PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom1Line(const void* ptr) {
+  PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 64);
+  PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 128);
+  PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 192);
+  PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 256);
+  PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 320);
 }
 
 #if defined(NDEBUG) && ABSL_HAVE_BUILTIN(__builtin_unreachable)
@@ -345,7 +395,13 @@ constexpr T* Launder(T* p) {
 #endif
 }
 
-#if ABSL_HAVE_BUILTIN(__is_bitwise_cloneable)
+#if defined(PROTOBUF_CUSTOM_VTABLE)
+constexpr bool EnableCustomNew() { return true; }
+template <typename T>
+constexpr bool EnableCustomNewFor() {
+  return true;
+}
+#elif ABSL_HAVE_BUILTIN(__is_bitwise_cloneable)
 constexpr bool EnableCustomNew() { return true; }
 template <typename T>
 constexpr bool EnableCustomNewFor() {

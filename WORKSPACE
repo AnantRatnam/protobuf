@@ -202,8 +202,8 @@ fuzzing_py_deps_install_deps()
 
 http_archive(
     name = "rules_rust",
-    integrity = "sha256-F8U7+AC5MvMtPKGdLLnorVM84cDXKfDRgwd7/dq3rUY=",
-    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.46.0/rules_rust-v0.46.0.tar.gz"],
+    integrity = "sha256-BCrPtzRpstGEj+FI2Bw0IsYepHqeGQDxyew29R6OcZM=",
+    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.51.0/rules_rust-v0.51.0.tar.gz"],
 )
 
 load("@rules_rust//rust:repositories.bzl", "rules_rust_dependencies", "rust_register_toolchains")
@@ -238,13 +238,9 @@ http_archive(
     url = "https://github.com/protocolbuffers/protobuf/releases/download/v25.0/protobuf-25.0.tar.gz",
 )
 
-# Needed as a dependency of @com_google_protobuf_v25.x, which was before
-# utf8_range was merged in.
-http_archive(
-    name = "utf8_range",
-    strip_prefix = "utf8_range-d863bc33e15cba6d873c878dcca9e6fe52b2f8cb",
-    url = "https://github.com/protocolbuffers/utf8_range/archive/d863bc33e15cba6d873c878dcca9e6fe52b2f8cb.zip",
-)
+# Needed as a dependency of @com_google_protobuf_v25.0
+load("@com_google_protobuf_v25.0//:protobuf_deps.bzl", protobuf_v25_deps="protobuf_deps")
+protobuf_v25_deps()
 
 # Needed for testing only
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
