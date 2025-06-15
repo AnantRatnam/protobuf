@@ -2864,6 +2864,23 @@ MapIterator Reflection::MapEnd(Message* message,
   return iter;
 }
 
+ConstMapIterator Reflection::ConstMapBegin(const Message* message,
+                                           const FieldDescriptor* field) const {
+  USAGE_CHECK(IsMapFieldInApi(field), ConstMapBegin,
+              "Field is not a map field.");
+  ConstMapIterator iter(message, field);
+  GetRaw<MapFieldBase>(*message, field).ConstMapBegin(&iter);
+  return iter;
+}
+
+ConstMapIterator Reflection::ConstMapEnd(const Message* message,
+                                         const FieldDescriptor* field) const {
+  USAGE_CHECK(IsMapFieldInApi(field), ConstMapEnd, "Field is not a map field.");
+  ConstMapIterator iter(message, field);
+  GetRaw<MapFieldBase>(*message, field).ConstMapEnd(&iter);
+  return iter;
+}
+
 int Reflection::MapSize(const Message& message,
                         const FieldDescriptor* field) const {
   USAGE_CHECK(IsMapFieldInApi(field), MapSize, "Field is not a map field.");
@@ -3455,13 +3472,17 @@ void* Reflection::RepeatedFieldData(Message* message,
 MapFieldBase* Reflection::MutableMapData(Message* message,
                                          const FieldDescriptor* field) const {
   USAGE_CHECK(IsMapFieldInApi(field), GetMapData, "Field is not a map field.");
-  return MutableRaw<MapFieldBase>(message, field);
+  auto* map = MutableRaw<MapFieldBase>(message, field);
+  map->MutableAccess();
+  return map;
 }
 
 const MapFieldBase* Reflection::GetMapData(const Message& message,
                                            const FieldDescriptor* field) const {
   USAGE_CHECK(IsMapFieldInApi(field), GetMapData, "Field is not a map field.");
-  return &(GetRaw<MapFieldBase>(message, field));
+  const auto* map = &(GetRaw<MapFieldBase>(message, field));
+  map->ConstAccess();
+  return map;
 }
 
 template <typename T>
